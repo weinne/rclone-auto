@@ -1,106 +1,120 @@
 # ☁️ RClone Auto
 
-> **The "Set and Forget" Rclone Manager for Linux.**
-> Manage Cloud Mounts & Syncs with a professional Terminal UI (TUI) or CLI commands.
+> **O Gerenciador Definitivo para Rclone no Linux.**
+> Gerencie montagens e sincronizações de nuvem com uma interface TUI moderna, bonita e inteligente.
 
 ![Bash](https://img.shields.io/badge/Language-Bash-4EAA25?style=flat-square)
+![Interface](https://img.shields.io/badge/Interface-Gum_(Charm)-ff69b4?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Linux-blue?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 
-**RClone Auto** is a standalone Bash script that automates the management of **Rclone** remotes. It handles dependencies, creates persistent `systemd` services, enforces naming conventions, and offers a hybrid interface (Interactive Menu + CLI Arguments).
+**RClone Auto** é um script Bash avançado que automatiza a configuração, montagem e sincronização de remotos do **Rclone**. Ele remove a complexidade da linha de comando, oferecendo uma experiência visual rica (mouse, filtros, cores) e garantindo persistência via `systemd`.
 
 ---
 
-## ✨ Key Features
+## ✨ Funcionalidades Principais
 
-* **🖥️ Native TUI:** Uses **Whiptail** for a clean, fast, and keyboard-friendly interface (Debian installer style).
-* **🚀 Smart Auto-Launch:** If you click the shortcut in your App Menu, it automatically detects it's not in a terminal and launches your preferred terminal emulator (Konsole, Gnome Terminal, Xterm, etc.) to run the script.
-* **⚡ Dual Modes:**
-    * **Mount Mode:** Streams files as a Virtual Drive (saves disk space).
-    * **Sync Mode:** Creates a real offline copy that syncs bidirectionally every **15 minutes** (via systemd timers).
-* **🏷️ Standardization:** Automatically enforces organized naming conventions (e.g., `drive-personal`, `onedrive-work`).
-* **🤖 CLI Automation:** Supports flags like `--mount`, `--stop`, and `--sync` for scripting and power users.
-* **📦 Self-Updating:** The script automatically installs itself to `~/.local/bin/` and updates its own desktop shortcuts.
+* **🎨 Interface Moderna (Gum):** Menus navegáveis, filtros de pesquisa, spinners de carregamento e confirmações visuais.
+* **🚀 Auto-Instalação Inteligente:** Detecta e baixa automaticamente as dependências (`rclone` e `gum`) se não estiverem instaladas.
+* **📦 Modo Portátil/Offline:** Suporte a binários embutidos no repositório para rodar sem internet ou instalação prévia.
+* **⚡ Modos Duplos:**
+    * **Mount:** Transforma a nuvem em um disco virtual (acesso imediato, sem ocupar espaço).
+    * **Sync:** Cria uma cópia offline real com sincronização bidirecional automática (a cada 15 min).
+* **🧠 Menu Contextual:** Gerencie conexões de forma intuitiva: clique na conexão -> escolha a ação (Parar, Abrir Pasta, Renomear, Excluir).
+* **🏷️ Padronização:** Enforce nomes organizados (ex: `drive-trabalho`, `s3-backup`) com lista dinâmica de provedores.
+* **🛠️ Ferramentas de Sistema:** Criação automática de atalhos no Menu/Área de Trabalho, correção de ícones e auto-update.
 
 ---
 
-## 📦 Installation
+## 📦 Instalação
 
-You don't need to install Rclone beforehand. The script handles everything.
+Você não precisa instalar nada antes. O script cuida de tudo.
+
+### Método Rápido (Online)
 
 ```bash
-# 1. Download the script
-wget [https://raw.githubusercontent.com/YOUR_USERNAME/REPO_NAME/main/rclone-auto.sh](https://raw.githubusercontent.com/YOUR_USERNAME/REPO_NAME/main/rclone-auto.sh)
+# 1. Baixe o script
+wget [https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPO/main/rclone-auto.sh](https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPO/main/rclone-auto.sh)
 
-# 2. Make it executable
+# 2. Dê permissão de execução
 chmod +x rclone-auto.sh
 
-# 3. Run it
+# 3. Execute
 ./rclone-auto.sh
 
-> **On the first run:** It will check for dependencies (`rclone`, `fuse3`, `whiptail`) and offer to install them automatically. It will also create a shortcut in your Application Menu.
+### Método Portátil (Offline / Bundle)
+
+Para criar um pacote que funciona em máquinas sem internet ou sem permissão de root:
+
+1. Baixe o binário do `gum` compatível com a arquitetura alvo.
+2. Coloque na mesma pasta do script (ou numa subpasta `bin/`).
+3. O script detectará o arquivo local e pulará o download.
 
 ---
 
-## 🎮 Usage
+## 🎮 Como Usar
 
-### Interactive Mode (Menu)
-
-Just run the command (or click the **RClone Auto** icon in your menu):
+Basta rodar o script. Se você estiver em um ambiente gráfico (Desktop), ele abrirá automaticamente o seu terminal favorito.
 
 ```bash
 rclone-auto
 
 ```
 
-This opens the **Main Dashboard** where you can:
+### O Menu Principal
 
-1. **New Connection:** Wizard to authenticate (Google, OneDrive, Dropbox, etc.) and choose between Mount or Sync.
-2. **Manage:** View active services, start stopped remotes, or stop/remove active ones.
-3. **Renaming:** Standardize old connections to the new format.
+1. **🚀 Nova Conexão:**
+* Lista dinamicamente os provedores suportados pelo seu Rclone.
+* Guia você pela autenticação no navegador.
+* Pergunta se deseja **Montar** ou **Sincronizar**.
+* Cria o serviço Systemd e inicia imediatamente.
 
-### CLI Mode (Power Users)
 
-You can control your clouds directly from the terminal without opening the menu:
+2. **📂 Gerenciar Conexões:**
+* Mostra uma lista colorida com status real (🟢 Montado, 🔵 Sync, ⚪ Parado).
+* Clique em uma conexão para ver opções específicas (Parar, Abrir, Ativar, Renomear).
 
-| Flag | Description | Example |
-| --- | --- | --- |
-| `--list` | List active services (systemd) and available remotes. | `rclone-auto --list` |
-| `--mount <name>` | Mounts an existing remote to `~/Nuvem/<name>`. | `rclone-auto --mount drive-work` |
-| `--sync <name>` | Schedules a bidirectional sync (15m timer). | `rclone-auto --sync onedrive-personal` |
-| `--stop <name>` | Stops and disables the mount/sync service. | `rclone-auto --stop drive-work` |
-| `--install` | Forces a reinstall of the script and shortcuts. | `rclone-auto --install` |
-| `--help` | Shows the help message. | `rclone-auto --help` |
 
----
+3. **🛠️ Ferramentas:**
+* Recriar atalhos na Área de Trabalho.
+* Corrigir ícones das pastas.
+* Atualizar binários do Rclone e Gum para a última versão.
 
-## 🛠️ How it Works
 
-1. **Persistence:** It creates user-level systemd units (`rclone-mount-NAME.service` or `rclone-sync-NAME.timer`).
-2. **Folder Structure:** All clouds are mounted/synced to `~/Nuvem/` (or `~/Cloud`).
-3. **Sync Logic:** The **Sync Mode** uses `rclone bisync` (bidirectional sync) with safety checks, running 5 minutes after boot and every 15 minutes thereafter.
-4. **Icons:** Sets standard Linux icons (`folder-remote`) for the parent directory to ensure visual consistency in file managers (Dolphin, Nautilus, Nemo).
 
 ---
 
-## 📋 Requirements
+## 🔧 Estrutura Técnica
 
-* **Linux:** Tested on Ubuntu, Kubuntu, Debian, Fedora, Arch.
-* **Dependencies:** `curl`, `unzip`, `fuse3`, `whiptail`.
-* **Rclone:** The script can download the official binary if missing.
+* **Persistência:** Utiliza unidades `systemd` de usuário (`rclone-mount-*.service` e `rclone-sync-*.timer`). Não requer `sudo` para rodar.
+* **Diretórios:**
+* Binários: `~/.local/bin/`
+* Configurações: `~/.config/rclone/`
+* Montagens: `~/Nuvem/`
+
+
+* **Ícones:** Aplica metadados `.directory` para integração visual com Dolphin/Nautilus (ícone de nuvem na pasta raiz).
 
 ---
 
-## 🤝 Contributing
+## 📋 Requisitos
 
-Pull requests are welcome!
+* **Sistema Operacional:** Linux (Ubuntu, Debian, Fedora, Arch, etc).
+* **Dependências de Sistema:** `curl`, `fuse3` (geralmente pré-instalado, mas necessário para montagem).
+* **Dependências Automáticas:** O script baixa `rclone` e `gum` (Go) automaticamente se não encontrar.
 
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/NewFeature`)
-3. Commit your Changes (`git commit -m 'Add NewFeature'`)
-4. Push to the Branch (`git push origin feature/NewFeature`)
-5. Open a Pull Request
+---
 
-## 📄 License
+## 🤝 Contribuindo
 
-Distributed under the MIT License.
+Pull requests são bem-vindos!
+
+1. Faça um Fork do projeto.
+2. Crie sua Feature Branch (`git checkout -b feature/NovaFeature`).
+3. Commit suas mudanças (`git commit -m 'Adiciona NovaFeature'`).
+4. Push para a Branch (`git push origin feature/NovaFeature`).
+5. Abra um Pull Request.
+
+## 📄 Licença
+
+Distribuído sob a licença MIT.

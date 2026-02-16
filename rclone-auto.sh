@@ -1,374 +1,320 @@
 #!/bin/bash
 
 # ==========================================
-# RClone Auto v31.0 (CLI/TUI Ultimate)
+# RClone Auto v42.0 (The Real Fix)
 # Autor: Weinne
-# Feature: Interface TUI pura, Auto-Launch de Terminal e Comandos via flag (--)
+# Feature: Correção na detecção de provedores usando 'rclone help backends'
 # ==========================================
 
-# --- Configurações ---
-APP_NAME="rclone-auto"
-PRETTY_NAME="RClone Auto"
-SYSTEM_ICON="folder-remote"
+# --- Configurações Visuais (Gum Theme) ---
+export GUM_CHOOSE_CURSOR="👉 "
+export GUM_CHOOSE_CURSOR_FOREGROUND="#00FFFF" # Cyan
+export GUM_CHOOSE_ITEM_FOREGROUND="#FFFFFF"   # Branco
+export GUM_CHOOSE_SELECTED_FOREGROUND="#00FFFF" # Cyan
+export GUM_CONFIRM_SELECTED_BACKGROUND="#008080" # Teal
 
 # Diretórios
+APP_NAME="rclone-auto"
 USER_BIN_DIR="$HOME/.local/bin"
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 SHORTCUT_DIR="$HOME/.local/share/applications"
 CLOUD_DIR="$HOME/Nuvem"
+SYSTEM_ICON="folder-remote"
 
-# Caminhos
 CURRENT_PATH=$(readlink -f "$0")
+SCRIPT_DIR=$(dirname "$CURRENT_PATH")
 TARGET_BIN="$USER_BIN_DIR/$APP_NAME"
 
 mkdir -p "$USER_BIN_DIR" "$SYSTEMD_DIR" "$CLOUD_DIR" "$SHORTCUT_DIR"
 export PATH="$USER_BIN_DIR:$PATH"
 
-# Binário Rclone (será detectado)
+# Binários
 RCLONE_BIN=""
+GUM_BIN=""
 
-# --- 1. Terminal Auto-Launcher ---
-# Se não estiver rodando em um terminal (ex: clicou no menu), abre um emulador.
+# --- 1. Inicialização ---
+
 ensure_terminal() {
     if [ ! -t 0 ]; then
-        # Lista de preferência de terminais
         for term in konsole gnome-terminal xfce4-terminal terminator xterm; do
-            if command -v $term &> /dev/null; then
-                # Executa o próprio script dentro do terminal encontrado
-                $term -e "$CURRENT_PATH"
-                exit 0
-            fi
+            if command -v $term &> /dev/null; then $term -e "$CURRENT_PATH"; exit 0; fi
         done
-        # Se não achar terminal nenhum (muito raro)
-        notify-send "Erro" "Nenhum terminal encontrado para abrir o Rclone Auto."
         exit 1
     fi
 }
 
-# --- 2. Funções TUI (Whiptail) ---
-# Wrappers simples para manter o código limpo
-
-ui_msg() {
-    whiptail --title "$PRETTY_NAME" --msgbox "$1\n\n$2" 12 70
-}
-
-ui_yesno() {
-    whiptail --title "$PRETTY_NAME" --yesno "$1" 10 60
-}
-
-ui_input() {
-    # $1 = Titulo, $2 = Valor Padrão
-    whiptail --title "$PRETTY_NAME" --inputbox "$1" 10 60 "$2" 3>&1 1>&2 2>&3
-}
-
-ui_menu() {
-    # $1 = Titulo, $2... = Opções
-    TITLE="$1"; shift
-    whiptail --title "$PRETTY_NAME" --menu "$TITLE" 20 70 10 "$@" 3>&1 1>&2 2>&3
-}
-
-# --- 3. Instalação e Atualização ---
-install_system() {
-    if [ "$CURRENT_PATH" != "$TARGET_BIN" ]; then
-        cp -f "$CURRENT_PATH" "$TARGET_BIN"
-        chmod +x "$TARGET_BIN"
+check_deps() {
+    # FUSE
+    if ! command -v fusermount &> /dev/null && ! command -v fusermount3 &> /dev/null; then
+        echo "❌ Erro: FUSE ausente. Instale 'fuse3'."
+        read -p "Enter..."
+        exit 1
     fi
 
+    # RCLONE
+    if [ -f "$USER_BIN_DIR/rclone" ]; then RCLONE_BIN="$USER_BIN_DIR/rclone"; elif command -v rclone &> /dev/null; then RCLONE_BIN=$(command -v rclone); fi
+    if [ -z "$RCLONE_BIN" ]; then
+        echo "⬇️  Baixando Rclone..."
+        curl -L https://downloads.rclone.org/rclone-current-linux-amd64.zip -o /tmp/rclone.zip
+        unzip -o /tmp/rclone.zip -d /tmp/inst > /dev/null
+        mv /tmp/inst/rclone-*-linux-amd64/rclone "$USER_BIN_DIR/"
+        chmod +x "$USER_BIN_DIR/rclone"
+        rm -rf /tmp/inst /tmp/rclone.zip
+        RCLONE_BIN="$USER_BIN_DIR/rclone"
+    fi
+
+    # GUM
+    if [ -f "$SCRIPT_DIR/gum" ] && [ -x "$SCRIPT_DIR/gum" ]; then GUM_BIN="$SCRIPT_DIR/gum"
+    elif [ -f "$USER_BIN_DIR/gum" ]; then GUM_BIN="$USER_BIN_DIR/gum"
+    elif command -v gum &> /dev/null; then GUM_BIN=$(command -v gum); fi
+
+    if [ -z "$GUM_BIN" ]; then
+        echo "🌐 Baixando interface Gum..."
+        ARCH=$(uname -m); case $ARCH in x86_64) GUM_ARCH="x86_64";; aarch64|arm64) GUM_ARCH="arm64";; *) echo "Arch $ARCH não suportada."; exit 1;; esac
+        VERSION="0.14.5"
+        curl -L -o /tmp/gum.tar.gz "https://github.com/charmbracelet/gum/releases/download/v${VERSION}/gum_${VERSION}_Linux_${GUM_ARCH}.tar.gz"
+        tar -xzf /tmp/gum.tar.gz -C /tmp/
+        mv $(find /tmp -name gum -type f -executable | head -n 1) "$USER_BIN_DIR/"
+        chmod +x "$USER_BIN_DIR/gum"
+        GUM_BIN="$USER_BIN_DIR/gum"
+        rm -rf /tmp/gum*
+    fi
+}
+
+install_system() {
+    if [ "$CURRENT_PATH" != "$TARGET_BIN" ]; then cp -f "$CURRENT_PATH" "$TARGET_BIN"; chmod +x "$TARGET_BIN"; fi
+    if [ "$GUM_BIN" == "$SCRIPT_DIR/gum" ] && [ ! -f "$USER_BIN_DIR/gum" ]; then cp "$SCRIPT_DIR/gum" "$USER_BIN_DIR/"; chmod +x "$USER_BIN_DIR/gum"; fi
+
     DESKTOP_FILE="$SHORTCUT_DIR/$APP_NAME.desktop"
-    cat <<EOF > "$DESKTOP_FILE"
-[Desktop Entry]
-Name=$PRETTY_NAME
-Comment=Gerenciador de Nuvens (TUI)
-Exec="$TARGET_BIN"
-Icon=$SYSTEM_ICON
-Terminal=true
-Type=Application
-Categories=Utility;Network;System;
-StartupWMClass=$APP_NAME
-EOF
+    echo -e "[Desktop Entry]\nName=RClone Auto\nComment=Gerenciador de Nuvens\nExec=\"$TARGET_BIN\"\nIcon=$SYSTEM_ICON\nTerminal=true\nType=Application\nCategories=Utility;Network;" > "$DESKTOP_FILE"
     chmod +x "$DESKTOP_FILE"
-
     if command -v update-desktop-database &> /dev/null; then update-desktop-database "$SHORTCUT_DIR" 2>/dev/null; fi
-    touch "$SHORTCUT_DIR"
-
-    # Ícone Pai
     if [ -d "$CLOUD_DIR" ]; then echo -e "[Desktop Entry]\nIcon=$SYSTEM_ICON\nType=Directory" > "$CLOUD_DIR/.directory" 2>/dev/null; fi
 }
 
-# --- 4. Checagem de Dependências ---
-check_deps() {
-    if ! command -v fusermount &> /dev/null && ! command -v fusermount3 &> /dev/null; then
-        echo "Erro: FUSE ausente. Instale 'fuse3'."
-        exit 1
-    fi
+# --- 2. Wrappers Visuais ---
 
-    if [ -f "$USER_BIN_DIR/rclone" ]; then RCLONE_BIN="$USER_BIN_DIR/rclone"; elif command -v rclone &> /dev/null; then RCLONE_BIN=$(command -v rclone); fi
-
-    if [ -z "$RCLONE_BIN" ]; then
-        if ui_yesno "Rclone não encontrado.\nDeseja baixar a versão portátil oficial agora?"; then
-             curl -L https://downloads.rclone.org/rclone-current-linux-amd64.zip -o /tmp/rclone.zip
-             unzip -o /tmp/rclone.zip -d /tmp/inst > /dev/null
-             mv /tmp/inst/rclone-*-linux-amd64/rclone "$USER_BIN_DIR/"; chmod +x "$USER_BIN_DIR/rclone"; rm -rf /tmp/inst /tmp/rclone.zip
-             RCLONE_BIN="$USER_BIN_DIR/rclone"
-             ui_msg "Sucesso" "Rclone instalado em $USER_BIN_DIR"
-        else
-            echo "Rclone necessário. Saindo."
-            exit 1
-        fi
-    fi
+ui_header() {
+    clear
+    $GUM_BIN style --foreground 212 --border-foreground 212 --border double --align center --width 50 --margin "1 2" --padding "0 2" "☁️  RClone Auto"
 }
 
-# --- 5. Funções Core (Lógica) ---
+ui_success() { $GUM_BIN style --foreground 46 "✅ $1"; sleep 1.5; }
+ui_error() { $GUM_BIN style --foreground 196 "❌ $1"; $GUM_BIN confirm "Ok" --affirmative "Entendi" --negative ""; }
 
-setup_sync_timer() {
-    REMOTE="$1"; LOCAL_PATH="$2"; SERVICE_NAME="rclone-sync-${REMOTE}"; REAL_RCLONE=$(readlink -f "$RCLONE_BIN")
-    cat <<EOF > "$SYSTEMD_DIR/${SERVICE_NAME}.service"
+# --- 3. Lógica de Serviços ---
+
+setup_sync() {
+    REMOTE="$1"; LOCAL="$CLOUD_DIR/$REMOTE"
+    mkdir -p "$LOCAL"
+    cat <<EOF > "$SYSTEMD_DIR/rclone-sync-${REMOTE}.service"
 [Unit]
-Description=Sync $REMOTE (Bisync)
-After=network-online.target
+Description=Sync $REMOTE
 [Service]
 Type=oneshot
-ExecStart=$REAL_RCLONE bisync "${REMOTE}:" "${LOCAL_PATH}" --create-empty-src-dirs --compare size,modtime,checksum --slow-hash-sync-only --resync --verbose
+ExecStart=$(readlink -f "$RCLONE_BIN") bisync "${REMOTE}:" "${LOCAL}" --create-empty-src-dirs --compare size,modtime,checksum --slow-hash-sync-only --resync --verbose
 EOF
-    cat <<EOF > "$SYSTEMD_DIR/${SERVICE_NAME}.timer"
+    cat <<EOF > "$SYSTEMD_DIR/rclone-sync-${REMOTE}.timer"
 [Unit]
-Description=Timer 15min $REMOTE
+Description=Timer 15m $REMOTE
 [Timer]
 OnBootSec=5min
 OnUnitActiveSec=15min
 [Install]
 WantedBy=timers.target
 EOF
-    systemctl --user daemon-reload; systemctl --user enable --now "${SERVICE_NAME}.timer"
-    systemctl --user start "${SERVICE_NAME}.service"
-    echo "Sync agendado para $REMOTE em $LOCAL_PATH"
+    $GUM_BIN spin --spinner dot --title "Agendando..." -- sleep 1
+    systemctl --user daemon-reload; systemctl --user enable --now "rclone-sync-${REMOTE}.timer"
+    $GUM_BIN spin --title "Sincronizando..." -- systemctl --user start "rclone-sync-${REMOTE}.service"
+    ui_success "Sync ativo: $LOCAL"
 }
 
-setup_mount_service() {
-    REMOTE="$1"; MOUNT_POINT="$2"; SERVICE_NAME="rclone-mount-${REMOTE}"; REAL_RCLONE=$(readlink -f "$RCLONE_BIN")
-    cat <<EOF > "$SYSTEMD_DIR/${SERVICE_NAME}.service"
+setup_mount() {
+    REMOTE="$1"; LOCAL="$CLOUD_DIR/$REMOTE"
+    mkdir -p "$LOCAL"
+    cat <<EOF > "$SYSTEMD_DIR/rclone-mount-${REMOTE}.service"
 [Unit]
 Description=Mount $REMOTE
-After=network-online.target
 [Service]
 Type=notify
-ExecStart=$REAL_RCLONE mount ${REMOTE}: "$MOUNT_POINT" --vfs-cache-mode full --no-modtime --vfs-read-chunk-size 32M --vfs-read-chunk-size-limit off
-ExecStop=/bin/fusermount -u "$MOUNT_POINT"
+ExecStart=$(readlink -f "$RCLONE_BIN") mount ${REMOTE}: "${LOCAL}" --vfs-cache-mode full --no-modtime
+ExecStop=/bin/fusermount -u "${LOCAL}"
 Restart=on-failure
-RestartSec=10
 [Install]
 WantedBy=default.target
 EOF
-    systemctl --user daemon-reload; systemctl --user enable --now "${SERVICE_NAME}.service"
-    # Aplica ícone pai (segurança)
-    if [ -d "$CLOUD_DIR" ]; then echo -e "[Desktop Entry]\nIcon=$SYSTEM_ICON\nType=Directory" > "$CLOUD_DIR/.directory" 2>/dev/null; fi
-    echo "Montagem iniciada: $REMOTE -> $MOUNT_POINT"
+    $GUM_BIN spin --spinner dot --title "Montando..." -- sleep 1
+    systemctl --user daemon-reload; systemctl --user enable --now "rclone-mount-${REMOTE}.service"
+    if systemctl --user is-active --quiet "rclone-mount-${REMOTE}.service"; then
+        if [ -d "$CLOUD_DIR" ]; then echo -e "[Desktop Entry]\nIcon=$SYSTEM_ICON\nType=Directory" > "$CLOUD_DIR/.directory" 2>/dev/null; fi
+        ui_success "Montado: $LOCAL"
+    else
+        ui_error "Erro ao montar."
+    fi
 }
 
-stop_service() {
+stop_all() {
     NAME="$1"
-    # Tenta parar mount e sync
-    systemctl --user stop "rclone-mount-${NAME}.service" 2>/dev/null
-    systemctl --user disable "rclone-mount-${NAME}.service" 2>/dev/null
-    rm "$SYSTEMD_DIR/rclone-mount-${NAME}.service" 2>/dev/null
-
-    systemctl --user stop "rclone-sync-${NAME}.timer" 2>/dev/null
-    systemctl --user stop "rclone-sync-${NAME}.service" 2>/dev/null
-    systemctl --user disable "rclone-sync-${NAME}.timer" 2>/dev/null
-    rm "$SYSTEMD_DIR/rclone-sync-${NAME}.timer" "$SYSTEMD_DIR/rclone-sync-${NAME}.service" 2>/dev/null
-
+    $GUM_BIN spin --title "Parando..." -- sleep 1
+    systemctl --user stop "rclone-mount-${NAME}.service" "rclone-sync-${NAME}.timer" "rclone-sync-${NAME}.service" 2>/dev/null
+    systemctl --user disable "rclone-mount-${NAME}.service" "rclone-sync-${NAME}.timer" 2>/dev/null
+    rm "$SYSTEMD_DIR/rclone-mount-${NAME}.service" "$SYSTEMD_DIR/rclone-sync-${NAME}.timer" "$SYSTEMD_DIR/rclone-sync-${NAME}.service" 2>/dev/null
     systemctl --user daemon-reload
-    echo "Serviços parados para: $NAME"
+    ui_success "Parado."
 }
 
-# --- 6. Menus TUI ---
+# --- 4. Ferramentas Globais ---
+
+update_binaries() {
+    echo "⬇️  Atualizando Rclone..."
+    curl -L https://downloads.rclone.org/rclone-current-linux-amd64.zip -o /tmp/rclone.zip
+    unzip -o /tmp/rclone.zip -d /tmp/inst > /dev/null
+    mv /tmp/inst/rclone-*-linux-amd64/rclone "$USER_BIN_DIR/"
+    chmod +x "$USER_BIN_DIR/rclone"
+
+    echo "⬇️  Atualizando Gum..."
+    ARCH=$(uname -m); case $ARCH in x86_64) GUM_ARCH="x86_64";; aarch64|arm64) GUM_ARCH="arm64";; esac
+    curl -L -o /tmp/gum.tar.gz "https://github.com/charmbracelet/gum/releases/download/v0.14.5/gum_0.14.5_Linux_${GUM_ARCH}.tar.gz"
+    tar -xzf /tmp/gum.tar.gz -C /tmp/
+    mv $(find /tmp -name gum -type f -executable | head -n 1) "$USER_BIN_DIR/"
+    chmod +x "$USER_BIN_DIR/gum"
+
+    ui_success "Binários atualizados!"
+}
+
+create_shortcuts() {
+    $GUM_BIN spin --title "Criando atalhos..." -- sleep 1
+    LIST=$(systemctl --user list-unit-files | grep "rclone-mount-" | grep "enabled" | awk '{print $1}')
+    for s in $LIST; do
+        NAME=$(echo "$s" | sed 's/rclone-mount-//;s/.service//')
+        MOUNT_POINT="$CLOUD_DIR/$NAME"
+        SHORTCUT="$HOME/Desktop/$NAME.desktop"
+        echo -e "[Desktop Entry]\nName=$NAME\nExec=xdg-open \"$MOUNT_POINT\"\nIcon=$SYSTEM_ICON\nType=Application" > "$SHORTCUT"
+        chmod +x "$SHORTCUT"
+    done
+    ui_success "Atalhos criados na Área de Trabalho!"
+}
+
+fix_icons() {
+    $GUM_BIN spin --title "Aplicando ícones..." -- sleep 1
+    if [ -d "$CLOUD_DIR" ]; then echo -e "[Desktop Entry]\nIcon=$SYSTEM_ICON\nType=Directory" > "$CLOUD_DIR/.directory" 2>/dev/null; fi
+    ui_success "Ícones reaplicados!"
+}
+
+do_global_tools() {
+    CHOICE=$(echo -e "🖥️  Criar Atalhos no Desktop\n🎨 Corrigir Ícones\n⬇️  Atualizar Binários (Rclone/Gum)\n♻️  Reinstalar Script\n🔙 Voltar" | $GUM_BIN choose --header "Ferramentas")
+
+    case "$CHOICE" in
+        "🖥️"*) create_shortcuts ;;
+        "🎨"*) fix_icons ;;
+        "⬇️"*) update_binaries ;;
+        "♻️"*) install_system; ui_success "Reinstalado!" ;;
+    esac
+}
+
+# --- 5. Menus ---
 
 do_wizard() {
-    PROVIDER=$(ui_menu "Selecione o Provedor" "drive" "Google Drive" "onedrive" "Microsoft OneDrive" "dropbox" "Dropbox" "s3" "Amazon S3" "mega" "Mega" "pcloud" "pCloud") || return
-    SUFFIX=$(ui_input "Sufixo do nome [${PROVIDER}-???]" "pessoal") || return
-    SUFFIX=$(echo "$SUFFIX" | tr -cd '[:alnum:]_-')
+    # CORREÇÃO: Usamos 'rclone help backends' em vez de 'providers'
+    # O awk pula a primeira linha (header) e formata "drive Google Drive" -> "drive (Google Drive)"
+    PROVIDERS=$($GUM_BIN spin --title "Carregando serviços..." -- "$RCLONE_BIN" help backends 2>/dev/null | tail -n +2 | awk '{printf "%s (%s)\n", $1, substr($0, index($0,$2))}')
+
+    # Fallback se a lista vier vazia (Rclone muito antigo ou erro de parsing)
+    if [ -z "$PROVIDERS" ]; then
+        PROVIDERS=$(echo -e "drive (Google Drive)\nonedrive (Microsoft)\ndropbox (Dropbox)\ns3 (Amazon/Minio)\nmega (Mega)\npcloud (pCloud)\nwebdav (WebDAV)\nftp (FTP)\nsftp (SSH/SFTP)")
+    fi
+
+    # Filtro Dinâmico
+    SEL=$(echo "$PROVIDERS" | $GUM_BIN choose --header "1. Selecione o Provedor (Digite para buscar)" --height 15)
+    [ -z "$SEL" ] && return
+
+    # Limpa cores e pega apenas o ID (primeira palavra)
+    PROVIDER=$(echo "$SEL" | awk '{print $1}' | sed 's/\x1b\[[0-9;]*m//g')
+
+    echo "📝 Sufixo (Ex: pessoal, trabalho)"
+    SUFFIX=$($GUM_BIN input --placeholder "pessoal" | tr -cd '[:alnum:]_-')
     [ -z "$SUFFIX" ] && return
 
     NAME="${PROVIDER}-${SUFFIX}"
-    if "$RCLONE_BIN" listremotes | grep -q "^${NAME}:"; then ui_msg "Erro" "Nome $NAME já existe."; return; fi
+    if "$RCLONE_BIN" listremotes | grep -q "^${NAME}:"; then ui_error "Já existe."; return; fi
 
-    ui_msg "Autorização" "O navegador será aberto para login em: $PROVIDER"
-    "$RCLONE_BIN" config create "$NAME" "$PROVIDER"
+    echo -e "🔑 Logar em \033[1;34m$PROVIDER\033[0m..."
+    $GUM_BIN confirm "Abrir navegador?" && "$RCLONE_BIN" config create "$NAME" "$PROVIDER"
 
     if "$RCLONE_BIN" listremotes | grep -q "^${NAME}:"; then
-        MODE=$(ui_menu "Como deseja utilizar?" "MOUNT" "Disco Virtual (Mount)" "SYNC" "Cópia Offline (Sync 15min)") || return
-
-        # Local padrão
-        LOCAL="$CLOUD_DIR/$NAME"
-        if ui_yesno "Usar pasta padrão?\n$LOCAL"; then
-            mkdir -p "$LOCAL"
-        else
-            LOCAL=$(ui_input "Caminho completo da pasta:" "$LOCAL")
-            mkdir -p "$LOCAL"
-        fi
-
-        if [ "$MODE" == "MOUNT" ]; then setup_mount_service "$NAME" "$LOCAL"; else setup_sync_timer "$NAME" "$LOCAL"; fi
-        ui_msg "Sucesso" "Configuração concluída!"
+        ACTION=$(echo -e "MOUNT (Disco Virtual)\nSYNC (Backup 15min)" | $GUM_BIN choose --header "2. Modo de uso")
+        if [[ "$ACTION" == MOUNT* ]]; then setup_mount "$NAME"; else setup_sync "$NAME"; fi
     else
-        ui_msg "Erro" "Falha ao criar conexão."
+        ui_error "Falha na criação. Tente 'Atualizar Binários' nas ferramentas."
     fi
 }
 
 do_manage() {
-    # Lista de ativos
-    LIST_RAW=$(systemctl --user list-unit-files | grep -E "rclone-(mount|sync)-" | grep "enabled" | awk '{print $1}')
+    REMOTES=$("$RCLONE_BIN" listremotes 2>/dev/null)
+    if [ -z "$REMOTES" ]; then ui_error "Nenhuma conexão criada."; return; fi
 
-    # Lista de Remotes do Rclone
-    REMOTES_RAW=$("$RCLONE_BIN" listremotes 2>/dev/null)
-
-    MENU_ITENS=()
-
-    # Adiciona remotes disponíveis para ativar
-    for r in $REMOTES_RAW; do
+    MENU_ITENS=""
+    for r in $REMOTES; do
         clean="${r%:}"
-        if ! echo "$LIST_RAW" | grep -q "$clean"; then
-            MENU_ITENS+=("START:$clean" "🟢 Ativar: $clean")
-        fi
+        STATUS="⚪"; TYPE="Parado"
+        if systemctl --user is-active --quiet "rclone-mount-${clean}.service"; then STATUS="🟢"; TYPE="Montado";
+        elif systemctl --user is-active --quiet "rclone-sync-${clean}.timer"; then STATUS="🔵"; TYPE="Sync"; fi
+
+        LINE=$(printf "%s  %-20s  (%s)" "$STATUS" "$clean" "$TYPE")
+        MENU_ITENS+="${LINE}\n"
     done
+    MENU_ITENS+="🔙 Voltar"
 
-    # Adiciona serviços ativos para parar
-    for s in $LIST_RAW; do
-        clean=$(echo "$s" | sed -E 's/rclone-(mount|sync)-//;s/\.(service|timer)//')
-        type="Mount"
-        [[ "$s" == *"sync"* ]] && type="Sync"
-        # Evita duplicatas visuais se tiver timer e service
-        if [[ ! "${MENU_ITENS[*]}" =~ "STOP:$clean" ]]; then
-            MENU_ITENS+=("STOP:$clean" "🔴 Parar ($type): $clean")
-        fi
-    done
+    CHOICE=$(echo -e "$MENU_ITENS" | $GUM_BIN choose --header "Gerenciar Conexões" --height 15)
 
-    if [ ${#MENU_ITENS[@]} -eq 0 ]; then ui_msg "Info" "Nada para gerenciar."; return; fi
+    if [[ "$CHOICE" == *"Voltar"* ]] || [ -z "$CHOICE" ]; then return; fi
+    NAME=$(echo "$CHOICE" | awk '{print $2}')
 
-    SEL=$(ui_menu "Gerenciar Conexões" "${MENU_ITENS[@]}") || return
-
-    if [[ "$SEL" == START:* ]]; then
-        NAME=${SEL#START:}
-        MODE=$(ui_menu "Modo" "MOUNT" "Mount" "SYNC" "Sync") || return
-        mkdir -p "$CLOUD_DIR/$NAME"
-        if [ "$MODE" == "MOUNT" ]; then setup_mount_service "$NAME" "$CLOUD_DIR/$NAME"; else setup_sync_timer "$NAME" "$CLOUD_DIR/$NAME"; fi
-        ui_msg "OK" "Iniciado."
-    elif [[ "$SEL" == STOP:* ]]; then
-        NAME=${SEL#STOP:}
-        stop_service "$NAME"
-        ui_msg "OK" "Parado e removido do boot."
+    if [[ "$CHOICE" == *"Montado"* ]] || [[ "$CHOICE" == *"Sync"* ]]; then
+        ACTION=$(echo -e "📂 Abrir Pasta\n🔴 Parar/Desativar\n🔙 Voltar" | $GUM_BIN choose --header "Ações para $NAME")
+        case "$ACTION" in
+            "📂 Abrir"*) xdg-open "$CLOUD_DIR/$NAME" ;;
+            "🔴 Parar"*) if $GUM_BIN confirm "Parar $NAME?"; then stop_all "$NAME"; fi ;;
+        esac
+    else
+        ACTION=$(echo -e "🟢 Ativar (Mount)\n🔵 Ativar (Sync)\n✏️  Renomear\n🗑️  Excluir\n🔙 Voltar" | $GUM_BIN choose --header "Ações para $NAME")
+        case "$ACTION" in
+            "🟢 Ativar"*) setup_mount "$NAME" ;;
+            "🔵 Ativar"*) setup_sync "$NAME" ;;
+            "🗑️  Excluir"*)
+                if $GUM_BIN confirm "Excluir $NAME permanentemente?"; then stop_all "$NAME"; "$RCLONE_BIN" config delete "$NAME"; ui_success "Removido."; fi ;;
+            "✏️  Renomear"*)
+                echo "📝 Novo sufixo para $NAME:"
+                NEW_SUF=$($GUM_BIN input | tr -cd '[:alnum:]_-')
+                if [ -n "$NEW_SUF" ]; then
+                    TYPE=$(echo "$NAME" | cut -d- -f1); NEW_NAME="${TYPE}-${NEW_SUF}"; stop_all "$NAME"
+                    CONF=$("$RCLONE_BIN" config file | grep ".conf" | tail -n1)
+                    sed -i "s/^\[$NAME\]$/\[$NEW_NAME\]/" "$CONF"
+                    if [ -d "$CLOUD_DIR/$NAME" ]; then mv "$CLOUD_DIR/$NAME" "$CLOUD_DIR/$NEW_NAME"; fi
+                    ui_success "Renomeado para $NEW_NAME"
+                fi ;;
+        esac
     fi
 }
 
-do_rename() {
-    # Pega lista limpa
-    REMOTES=$("$RCLONE_BIN" listremotes 2>/dev/null)
-    [ -z "$REMOTES" ] && return
+# --- 6. Loop Principal ---
 
-    MENU=()
-    for r in $REMOTES; do clean="${r%:}"; MENU+=("$clean" "$clean"); done
-
-    OLD=$(ui_menu "Renomear/Padronizar" "${MENU[@]}") || return
-
-    TYPE=$("$RCLONE_BIN" config show "$OLD" | grep "type =" | head -n1 | cut -d= -f2 | tr -d ' ')
-    [ -z "$TYPE" ] && TYPE="cloud"
-
-    SUF=$(ui_input "Novo Sufixo [${TYPE}-???]" "novo") || return
-    NEW="${TYPE}-${SUF}"
-
-    if [ "$NEW" == "$OLD" ]; then return; fi
-
-    stop_service "$OLD"
-
-    CONF=$("$RCLONE_BIN" config file | grep ".conf" | tail -n1)
-    sed -i "s/^\[$OLD\]$/\[$NEW\]/" "$CONF"
-
-    if [ -d "$CLOUD_DIR/$OLD" ]; then mv "$CLOUD_DIR/$OLD" "$CLOUD_DIR/$NEW"; fi
-
-    ui_msg "Sucesso" "Renomeado para $NEW.\nVá em Gerenciar para ativar novamente."
-}
-
-
-# --- 7. Argumentos CLI (Ações Diretas) ---
-show_help() {
-    echo "Uso: rclone-auto [OPÇÃO]"
-    echo ""
-    echo "  (sem args)      Abre o menu interativo (TUI)"
-    echo "  --list          Lista conexões ativas e disponíveis"
-    echo "  --stop <nome>   Para a montagem/sync de uma conexão"
-    echo "  --mount <nome>  Monta uma conexão existente (pasta padrão)"
-    echo "  --sync <nome>   Agenda sync para uma conexão (pasta padrão)"
-    echo "  --install       Força a (re)instalação do script/atalhos"
-    echo "  --help          Mostra esta ajuda"
-    exit 0
-}
-
-if [ "$#" -gt 0 ]; then
-    # Estamos no modo CLI
-    check_deps # Garante que rclone existe
-
-    case "$1" in
-        --list)
-            echo "--- Ativos (Systemd) ---"
-            systemctl --user list-unit-files | grep -E "rclone-(mount|sync)-" | grep "enabled"
-            echo ""
-            echo "--- Disponíveis (Rclone) ---"
-            "$RCLONE_BIN" listremotes
-            ;;
-        --stop)
-            if [ -z "$2" ]; then echo "Informe o nome. Ex: --stop drive-pessoal"; exit 1; fi
-            stop_service "$2"
-            ;;
-        --mount)
-            if [ -z "$2" ]; then echo "Informe o nome."; exit 1; fi
-            mkdir -p "$CLOUD_DIR/$2"
-            setup_mount_service "$2" "$CLOUD_DIR/$2"
-            ;;
-        --sync)
-            if [ -z "$2" ]; then echo "Informe o nome."; exit 1; fi
-            mkdir -p "$CLOUD_DIR/$2"
-            setup_sync_timer "$2" "$CLOUD_DIR/$2"
-            ;;
-        --install)
-            install_system
-            echo "Instalação forçada concluída."
-            ;;
-        --help|-h)
-            show_help
-            ;;
-        *)
-            echo "Opção inválida: $1"
-            show_help
-            ;;
-    esac
-    exit 0
-fi
-
-# --- 8. Loop Principal (Modo Interativo) ---
-
-# Se chegou aqui, não tem argumentos.
-ensure_terminal # Garante que está no Konsole/Terminal
-install_system  # Auto-update silencioso
-check_deps      # Garante dependencias
+ensure_terminal
+check_deps; install_system
 
 while true; do
-    # Dashboard simples no titulo do menu
-    ACTIVES=$(systemctl --user list-unit-files | grep -E "rclone-(mount|sync)-" | grep "enabled" | wc -l)
+    ui_header
+    ACTIVE=$(systemctl --user list-unit-files | grep -E "rclone-(mount|sync)-" | grep "enabled" | wc -l)
+    echo -e "   Conexões Ativas: \033[1;32m$ACTIVE\033[0m"
+    echo ""
 
-    CHOICE=$(whiptail --title "$PRETTY_NAME" --menu "Ativos: $ACTIVES" 20 70 10 \
-        "1" "Nova Conexão (Wizard)" \
-        "2" "Gerenciar (Ativar/Parar)" \
-        "3" "Renomear/Padronizar" \
-        "4" "Console Rclone (Avançado)" \
-        "0" "Sair" 3>&1 1>&2 2>&3)
-
-    EXIT_CODE=$?
-    if [ $EXIT_CODE -ne 0 ]; then exit 0; fi
+    CHOICE=$(echo -e "🚀 Nova Conexão\n📂 Gerenciar Conexões\n🛠️  Ferramentas do Sistema\n🔧 Avançado (Rclone Config)\n🚪 Sair" | $GUM_BIN choose --header "Menu Principal")
 
     case "$CHOICE" in
-        1) do_wizard ;;
-        2) do_manage ;;
-        3) do_rename ;;
-        4) "$RCLONE_BIN" config ;;
-        0) clear; exit 0 ;;
+        "🚀 Nova"*) do_wizard ;;
+        "📂 Gerenciar"*) do_manage ;;
+        "🛠️  Ferramentas"*) do_global_tools ;;
+        "🔧 Avançado"*) "$RCLONE_BIN" config ;;
+        "🚪 Sair") clear; exit 0 ;;
     esac
 done
