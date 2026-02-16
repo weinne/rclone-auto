@@ -1,4 +1,3 @@
-```markdown
 # ☁️ RClone Auto
 
 > **The "Set and Forget" Rclone Manager for Linux.**
@@ -37,8 +36,6 @@ chmod +x rclone-auto.sh
 
 # 3. Run it
 ./rclone-auto.sh
-
-```
 
 > **Note:** On the first run, it will verify dependencies (`rclone`, `fuse3`) and create a shortcut in your Application Menu.
 
