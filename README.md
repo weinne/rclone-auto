@@ -115,6 +115,21 @@ Pull requests são bem-vindos!
 4. Push para a Branch (`git push origin feature/NovaFeature`).
 5. Abra um Pull Request.
 
-## 📄 Licença
 
-Distribuído sob a licença MIT.
+## 👏 Créditos e Dependências
+
+Este projeto é um "wrapper" de automação que se apoia em ferramentas open-source incríveis. Todo o crédito aos criadores originais pelas tecnologias subjacentes:
+
+* **[Gum](https://github.com/charmbracelet/gum):** Desenvolvido pela [Charm](https://charm.sh/). Usado para criar a interface TUI moderna, interativa e bonita. Distribuído sob a licença MIT.
+* **[Rclone](https://rclone.org/):** Desenvolvido por Nick Craig-Wood e contribuidores. É o motor robusto que realiza as conexões e sincronizações com a nuvem. Distribuído sob a licença MIT.
+
+> **Nota sobre Distribuição:**
+> Para facilitar a experiência do usuário ("battery-included"), este repositório pode conter ou baixar automaticamente binários dessas ferramentas. Todos os direitos de propriedade intelectual pertencem aos seus respectivos autores.
+
+---
+
+## 📜 Licença
+
+Este projeto (o script `rclone-auto`) é distribuído sob a licença **MIT**.
+
+Você é livre para usar, modificar e distribuir, desde que mantenha os créditos.
