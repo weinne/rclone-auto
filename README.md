@@ -1,35 +1,36 @@
 # ☁️ RClone Auto
 
 > **The "Set and Forget" Rclone Manager for Linux.**
-> Mount Google Drive, OneDrive, S3, and others as local folders with a native GUI or Terminal UI.
+> Manage Cloud Mounts & Syncs with a professional Terminal UI (TUI) or CLI commands.
 
 ![Bash](https://img.shields.io/badge/Language-Bash-4EAA25?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Linux-blue?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 
-**RClone Auto** is a standalone Bash script that automates the mounting of cloud storage using **Rclone**. It handles dependencies, creates persistent systemd services, and offers a hybrid interface that adapts to your environment (Desktop vs. Server).
+**RClone Auto** is a standalone Bash script that automates the management of **Rclone** remotes. It handles dependencies, creates persistent `systemd` services, enforces naming conventions, and offers a hybrid interface (Interactive Menu + CLI Arguments).
 
 ---
 
 ## ✨ Key Features
 
-* **🖥️ Hybrid Interface:** Automatically detects your environment.
-    * **GUI Mode:** Uses **Zenity** for a native desktop experience (GNOME, KDE, XFCE).
-    * **TUI Mode:** Uses **Whiptail** for SSH/Server sessions.
-* **🔒 Zero Sudo Required:** Runs entirely in user-space. No root privileges needed.
-* **🚀 Persistence:** Creates `systemd --user` units. Your cloud drives mount automatically when you log in or boot up.
-* **⚡ Performance Tuned:** Pre-configured with optimal VFS cache flags (`--vfs-cache-mode full`) for smooth file editing and streaming.
-* **📦 Auto-Install:** Automatically fetches the official Rclone binary and sets up a Desktop Shortcut with an icon on the first run.
+* **🖥️ Native TUI:** Uses **Whiptail** for a clean, fast, and keyboard-friendly interface (Debian installer style).
+* **🚀 Smart Auto-Launch:** If you click the shortcut in your App Menu, it automatically detects it's not in a terminal and launches your preferred terminal emulator (Konsole, Gnome Terminal, Xterm, etc.) to run the script.
+* **⚡ Dual Modes:**
+    * **Mount Mode:** Streams files as a Virtual Drive (saves disk space).
+    * **Sync Mode:** Creates a real offline copy that syncs bidirectionally every **15 minutes** (via systemd timers).
+* **🏷️ Standardization:** Automatically enforces organized naming conventions (e.g., `drive-personal`, `onedrive-work`).
+* **🤖 CLI Automation:** Supports flags like `--mount`, `--stop`, and `--sync` for scripting and power users.
+* **📦 Self-Updating:** The script automatically installs itself to `~/.local/bin/` and updates its own desktop shortcuts.
 
 ---
 
 ## 📦 Installation
 
-You don't need to install anything beforehand. Just download the script and run it.
+You don't need to install Rclone beforehand. The script handles everything.
 
 ```bash
 # 1. Download the script
-wget [https://raw.githubusercontent.com/weinne/rclone-auto/main/rclone-auto.sh](https://raw.githubusercontent.com/weinne/rclone-auto/main/rclone-auto.sh)
+wget [https://raw.githubusercontent.com/YOUR_USERNAME/REPO_NAME/main/rclone-auto.sh](https://raw.githubusercontent.com/YOUR_USERNAME/REPO_NAME/main/rclone-auto.sh)
 
 # 2. Make it executable
 chmod +x rclone-auto.sh
@@ -37,75 +38,69 @@ chmod +x rclone-auto.sh
 # 3. Run it
 ./rclone-auto.sh
 
-> **Note:** On the first run, it will verify dependencies (`rclone`, `fuse3`) and create a shortcut in your Application Menu.
+> **On the first run:** It will check for dependencies (`rclone`, `fuse3`, `whiptail`) and offer to install them automatically. It will also create a shortcut in your Application Menu.
 
 ---
 
 ## 🎮 Usage
 
-You can launch **RClone Auto** from your Application Menu (search for "RClone Auto") or run it via terminal with optional flags:
+### Interactive Mode (Menu)
 
-### Automatic Mode (Default)
-
-Detects if a graphical display is available. If yes, opens GUI; otherwise, opens TUI.
+Just run the command (or click the **RClone Auto** icon in your menu):
 
 ```bash
-./rclone-auto.sh
+rclone-auto
 
 ```
 
-### Force GUI Mode
+This opens the **Main Dashboard** where you can:
 
-Forces the Zenity interface (requires a desktop environment).
+1. **New Connection:** Wizard to authenticate (Google, OneDrive, Dropbox, etc.) and choose between Mount or Sync.
+2. **Manage:** View active services, start stopped remotes, or stop/remove active ones.
+3. **Renaming:** Standardize old connections to the new format.
 
-```bash
-./rclone-auto.sh --gui
+### CLI Mode (Power Users)
 
-```
+You can control your clouds directly from the terminal without opening the menu:
 
-### Force Terminal Mode
-
-Forces the Whiptail interface (useful for remote management via SSH).
-
-```bash
-./rclone-auto.sh --tui
-
-```
+| Flag | Description | Example |
+| --- | --- | --- |
+| `--list` | List active services (systemd) and available remotes. | `rclone-auto --list` |
+| `--mount <name>` | Mounts an existing remote to `~/Nuvem/<name>`. | `rclone-auto --mount drive-work` |
+| `--sync <name>` | Schedules a bidirectional sync (15m timer). | `rclone-auto --sync onedrive-personal` |
+| `--stop <name>` | Stops and disables the mount/sync service. | `rclone-auto --stop drive-work` |
+| `--install` | Forces a reinstall of the script and shortcuts. | `rclone-auto --install` |
+| `--help` | Shows the help message. | `rclone-auto --help` |
 
 ---
 
 ## 🛠️ How it Works
 
-1. **Mounting:** It creates a mount point in `~/Nuvem/REMOTE_NAME` (or any folder you choose).
-2. **Systemd Service:** It generates a user service file at `~/.config/systemd/user/rclone-mount-NAME.service`.
-3. **Boot:** It enables the service using `systemctl --user enable`. This ensures the drive is mounted every time the system starts (user login).
-4. **Icons:** It fetches the official Rclone logo and installs it to `~/.local/share/icons/` to ensure the window and shortcut look professional.
+1. **Persistence:** It creates user-level systemd units (`rclone-mount-NAME.service` or `rclone-sync-NAME.timer`).
+2. **Folder Structure:** All clouds are mounted/synced to `~/Nuvem/` (or `~/Cloud`).
+3. **Sync Logic:** The **Sync Mode** uses `rclone bisync` (bidirectional sync) with safety checks, running 5 minutes after boot and every 15 minutes thereafter.
+4. **Icons:** Sets standard Linux icons (`folder-remote`) for the parent directory to ensure visual consistency in file managers (Dolphin, Nautilus, Nemo).
 
 ---
 
 ## 📋 Requirements
 
-The script checks for these and attempts to solve missing dependencies:
-
-* **Rclone:** If missing, the script offers to download the official static binary to `~/.local/bin/`.
-* **FUSE 3:** Required for mounting (`sudo apt install fuse3` on Ubuntu/Debian).
-* **Zenity:** Required for GUI mode (pre-installed on most distros).
-* **Whiptail:** Required for TUI mode (pre-installed on most distros).
+* **Linux:** Tested on Ubuntu, Kubuntu, Debian, Fedora, Arch.
+* **Dependencies:** `curl`, `unzip`, `fuse3`, `whiptail`.
+* **Rclone:** The script can download the official binary if missing.
 
 ---
 
 ## 🤝 Contributing
 
-Pull requests are welcome! Feel free to open an issue if you find a bug or have a feature request.
+Pull requests are welcome!
 
 1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
+2. Create your Feature Branch (`git checkout -b feature/NewFeature`)
+3. Commit your Changes (`git commit -m 'Add NewFeature'`)
+4. Push to the Branch (`git push origin feature/NewFeature`)
 5. Open a Pull Request
 
 ## 📄 License
 
-Distributed under the MIT License. See `LICENSE` for more information.
-
-```
+Distributed under the MIT License.
