@@ -29,7 +29,7 @@ You don't need to install anything beforehand. Just download the script and run 
 
 ```bash
 # 1. Download the script
-wget [https://raw.githubusercontent.com/YOUR_USERNAME/REPO_NAME/main/rclone-auto.sh](https://raw.githubusercontent.com/YOUR_USERNAME/REPO_NAME/main/rclone-auto.sh)
+wget [https://raw.githubusercontent.com/weinne/rclone-auto/main/rclone-auto.sh](https://raw.githubusercontent.com/weinne/rclone-auto/main/rclone-auto.sh)
 
 # 2. Make it executable
 chmod +x rclone-auto.sh
