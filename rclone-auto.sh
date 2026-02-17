@@ -103,25 +103,12 @@ handle_cli_args() {
                 exit 0
             fi
 
-            # Busca metadata para identificar Google Docs/Sheets/etc.
-            META_JSON=$("$RCLONE_BIN" lsjson --metadata "$REMOTE_SPEC" 2>/dev/null)
-            if [ -z "$META_JSON" ]; then
-                xdg-open "$TARGET_PATH" >/dev/null 2>&1 &
+            # Tenta obter um link web estável para o caminho remoto
+            URL=$("$RCLONE_BIN" link "$REMOTE_SPEC" 2>/dev/null)
+            if [ -n "$URL" ]; then
+                xdg-open "$URL" >/dev/null 2>&1 &
                 exit 0
             fi
-
-            MIME=$(echo "$META_JSON" | grep -o '"MimeType":[^,]*' | sed 's/.*"MimeType"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' | head -n1)
-
-            case "$MIME" in
-                application/vnd.google-apps.*)
-                    # Tenta obter link público ou de visualização
-                    URL=$("$RCLONE_BIN" link "$REMOTE_SPEC" 2>/dev/null)
-                    if [ -n "$URL" ]; then
-                        xdg-open "$URL" >/dev/null 2>&1 &
-                        exit 0
-                    fi
-                    ;;
-            esac
 
             # Fallback: abre normalmente via sistema
             xdg-open "$TARGET_PATH" >/dev/null 2>&1 &
@@ -135,12 +122,13 @@ handle_cli_args() {
             echo "Opções:"
             echo "  --enable-boot <nome-remoto>   Habilita auto-start (mount/sync) para o remoto"
             echo "  --disable-boot <nome-remoto>  Desabilita auto-start (mount/sync) para o remoto"
-            echo "  --open-path <caminho-local>   Resolvedor: abre caminho em ~/Nuvem,"
-            echo "                                redirecionando Docs/Sheets do Google para o navegador"
+            echo "  --open-path <caminho-local>   Abre um arquivo/pasta da Nuvem diretamente no navegador (via rclone link)"
             echo "  -h, --help                    Mostra esta ajuda"
             exit 0
             ;;
     esac
+
+    # Se nenhuma opção especial foi tratada, segue fluxo normal (TUI)
 }
 
 ensure_terminal() {
@@ -221,17 +209,17 @@ install_system() {
     echo -e "[Desktop Entry]\nName=RClone Auto\nComment=Gerenciador de Nuvens\nExec=\"$TARGET_BIN\"\nIcon=$SYSTEM_ICON\nTerminal=true\nType=Application\nCategories=Utility;Network;" > "$DESKTOP_FILE"
     chmod +x "$DESKTOP_FILE"
 
-    # Resolvedor para abrir arquivos da pasta Nuvem com tratamento especial para Google Docs/Sheets
+    # Resolvedor simples: abre qualquer caminho dentro da Nuvem no navegador via rclone link.
     RESOLVER_DESKTOP="$SHORTCUT_DIR/${APP_NAME}-resolver.desktop"
     cat <<EOF > "$RESOLVER_DESKTOP"
 [Desktop Entry]
-Name=RClone Auto Resolver
-Comment=Abre arquivos da Nuvem, redirecionando Google Docs/Sheets para o navegador
+Name=RClone Auto Resolver (Web)
+Comment=Abre itens montados da Nuvem diretamente na Web
 Exec="$TARGET_BIN" --open-path "%f"
 Icon=$SYSTEM_ICON
 Terminal=false
 Type=Application
-NoDisplay=true
+NoDisplay=false
 MimeType=application/octet-stream;
 EOF
     chmod +x "$RESOLVER_DESKTOP"
@@ -545,7 +533,7 @@ do_manage() {
 
 # --- 6. Loop Principal ---
 
-handle_cli_args "$1"
+handle_cli_args "$@"
 
 ensure_terminal
 check_deps_splash
