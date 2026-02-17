@@ -35,6 +35,42 @@ GUM_BIN=""
 
 # --- 1. Inicialização ---
 
+handle_cli_args() {
+    case "$1" in
+        --enable-boot)
+            NAME="$2"
+            if [ -z "$NAME" ]; then
+                echo "Uso: $APP_NAME --enable-boot <nome-remoto>"
+                exit 1
+            fi
+            systemctl --user enable "rclone-mount-${NAME}.service" "rclone-sync-${NAME}.timer" 2>/dev/null
+            echo "Auto-start habilitado (quando existentes) para: $NAME"
+            exit 0
+            ;;
+        --disable-boot)
+            NAME="$2"
+            if [ -z "$NAME" ]; then
+                echo "Uso: $APP_NAME --disable-boot <nome-remoto>"
+                exit 1
+            fi
+            systemctl --user disable "rclone-mount-${NAME}.service" "rclone-sync-${NAME}.timer" 2>/dev/null
+            echo "Auto-start desabilitado (quando existentes) para: $NAME"
+            exit 0
+            ;;
+        --help|-h)
+            echo "Uso: $APP_NAME [opções]"
+            echo ""
+            echo "Sem opções: abre a interface interativa (TUI)."
+            echo ""
+            echo "Opções:"
+            echo "  --enable-boot <nome-remoto>   Habilita auto-start (mount/sync) para o remoto"
+            echo "  --disable-boot <nome-remoto>  Desabilita auto-start (mount/sync) para o remoto"
+            echo "  -h, --help                    Mostra esta ajuda"
+            exit 0
+            ;;
+    esac
+}
+
 ensure_terminal() {
     if [ ! -t 0 ]; then
         for term in konsole gnome-terminal xfce4-terminal terminator xterm; do
@@ -136,7 +172,7 @@ ui_error() { $GUM_BIN style --foreground 196 "❌ $1"; $GUM_BIN confirm "Ok" --a
 # --- 3. Lógica Core ---
 
 setup_sync() {
-    REMOTE="$1"; LOCAL="$CLOUD_DIR/$REMOTE"
+    REMOTE="$1"; LOCAL="$CLOUD_DIR/$REMOTE"; AUTO_START="$2"
     mkdir -p "$LOCAL"
     cat <<EOF > "$SYSTEMD_DIR/rclone-sync-${REMOTE}.service"
 [Unit]
@@ -155,13 +191,18 @@ OnUnitActiveSec=15min
 WantedBy=timers.target
 EOF
     $GUM_BIN spin --spinner dot --title "Configurando timer..." -- sleep 1
-    systemctl --user daemon-reload; systemctl --user enable --now "rclone-sync-${REMOTE}.timer"
+    systemctl --user daemon-reload
+    if [ "$AUTO_START" = "auto" ]; then
+        systemctl --user enable --now "rclone-sync-${REMOTE}.timer"
+    else
+        systemctl --user start "rclone-sync-${REMOTE}.timer"
+    fi
     $GUM_BIN spin --title "Sincronizando arquivos..." -- systemctl --user start "rclone-sync-${REMOTE}.service"
     ui_success "Pronto! A pasta $REMOTE está sincronizada."
 }
 
 setup_mount() {
-    REMOTE="$1"; LOCAL="$CLOUD_DIR/$REMOTE"
+    REMOTE="$1"; LOCAL="$CLOUD_DIR/$REMOTE"; AUTO_START="$2"
     mkdir -p "$LOCAL"
     cat <<EOF > "$SYSTEMD_DIR/rclone-mount-${REMOTE}.service"
 [Unit]
@@ -175,7 +216,12 @@ Restart=on-failure
 WantedBy=default.target
 EOF
     $GUM_BIN spin --spinner dot --title "Montando disco..." -- sleep 1
-    systemctl --user daemon-reload; systemctl --user enable --now "rclone-mount-${REMOTE}.service"
+    systemctl --user daemon-reload
+    if [ "$AUTO_START" = "auto" ]; then
+        systemctl --user enable --now "rclone-mount-${REMOTE}.service"
+    else
+        systemctl --user start "rclone-mount-${REMOTE}.service"
+    fi
     if systemctl --user is-active --quiet "rclone-mount-${REMOTE}.service"; then
         if [ -d "$CLOUD_DIR" ]; then echo -e "[Desktop Entry]\nIcon=$SYSTEM_ICON\nType=Directory" > "$CLOUD_DIR/.directory" 2>/dev/null; fi
         ui_success "Conectado! Acesso disponível na pasta Nuvem."
@@ -294,10 +340,17 @@ ALL (Outros / Listar Todos)
         ui_talk "Sucesso! Agora, como você quer usar essa nuvem?"
         ACTION=$(echo -e "MOUNT (Disco Virtual - Economiza espaço)\nSYNC (Backup Offline - Cópia segura)" | $GUM_BIN choose)
 
-        if [[ "$ACTION" == MOUNT* ]]; then
-            setup_mount "$NAME"
+        ui_talk "Você quer que essa conexão inicie automaticamente junto com a sua sessão?"
+        if $GUM_BIN confirm "Sim, iniciar automaticamente" --negative "Não, iniciar só quando eu mandar"; then
+            AUTO_MODE="auto"
         else
-            setup_sync "$NAME"
+            AUTO_MODE="manual"
+        fi
+
+        if [[ "$ACTION" == MOUNT* ]]; then
+            setup_mount "$NAME" "$AUTO_MODE"
+        else
+            setup_sync "$NAME" "$AUTO_MODE"
         fi
     else
         ui_error "Não consegui confirmar a criação. Tente novamente."
@@ -326,17 +379,42 @@ do_manage() {
     if [[ "$CHOICE" == *"Voltar"* ]] || [ -z "$CHOICE" ]; then return; fi
     NAME=$(echo "$CHOICE" | awk '{print $2}')
 
+    AUTO_ENABLED="não"
+    if systemctl --user list-unit-files | grep -q "rclone-mount-${NAME}.service" && \
+       systemctl --user is-enabled --quiet "rclone-mount-${NAME}.service"; then
+        AUTO_ENABLED="sim"
+    elif systemctl --user list-unit-files | grep -q "rclone-sync-${NAME}.timer" && \
+         systemctl --user is-enabled --quiet "rclone-sync-${NAME}.timer"; then
+        AUTO_ENABLED="sim"
+    fi
+
     if [[ "$CHOICE" == *"Montado"* ]] || [[ "$CHOICE" == *"Sync"* ]]; then
-        ACTION=$(echo -e "📂 Abrir Pasta\n🔴 Desconectar\n🔙 Voltar" | $GUM_BIN choose --header "Opções para $NAME")
+        ACTION=$(echo -e "📂 Abrir Pasta\n🔴 Desconectar\n⚙️  Alternar Auto-start (atual: $AUTO_ENABLED)\n🔙 Voltar" | $GUM_BIN choose --header "Opções para $NAME")
         case "$ACTION" in
             "📂 Abrir"*) xdg-open "$CLOUD_DIR/$NAME" ;;
             "🔴 Desconectar"*) if $GUM_BIN confirm "Tem certeza que deseja parar $NAME?"; then stop_all "$NAME"; fi ;;
+            "⚙️  Alternar Auto-start"*)
+                if [ "$AUTO_ENABLED" = "sim" ]; then
+                    systemctl --user disable "rclone-mount-${NAME}.service" "rclone-sync-${NAME}.timer" 2>/dev/null
+                    ui_success "Auto-start desativado para $NAME."
+                else
+                    systemctl --user enable "rclone-mount-${NAME}.service" "rclone-sync-${NAME}.timer" 2>/dev/null
+                    ui_success "Auto-start ativado para $NAME."
+                fi ;;
         esac
     else
-        ACTION=$(echo -e "🟢 Ativar (Mount)\n🔵 Ativar (Sync)\n✏️  Renomear\n🗑️  Excluir\n🔙 Voltar" | $GUM_BIN choose --header "Opções para $NAME")
+        ACTION=$(echo -e "🟢 Ativar (Mount)\n🔵 Ativar (Sync)\n⚙️  Alternar Auto-start (atual: $AUTO_ENABLED)\n✏️  Renomear\n🗑️  Excluir\n🔙 Voltar" | $GUM_BIN choose --header "Opções para $NAME")
         case "$ACTION" in
             "🟢 Ativar"*) setup_mount "$NAME" ;;
             "🔵 Ativar"*) setup_sync "$NAME" ;;
+            "⚙️  Alternar Auto-start"*)
+                if [ "$AUTO_ENABLED" = "sim" ]; then
+                    systemctl --user disable "rclone-mount-${NAME}.service" "rclone-sync-${NAME}.timer" 2>/dev/null
+                    ui_success "Auto-start desativado para $NAME."
+                else
+                    systemctl --user enable "rclone-mount-${NAME}.service" "rclone-sync-${NAME}.timer" 2>/dev/null
+                    ui_success "Auto-start ativado para $NAME."
+                fi ;;
             "🗑️  Excluir"*)
                 if $GUM_BIN confirm "Excluir configurações de $NAME permanentemente?"; then
                     stop_all "$NAME"; "$RCLONE_BIN" config delete "$NAME"; ui_success "Removido.";
@@ -356,6 +434,8 @@ do_manage() {
 }
 
 # --- 6. Loop Principal ---
+
+handle_cli_args "$1"
 
 ensure_terminal
 check_deps_splash
