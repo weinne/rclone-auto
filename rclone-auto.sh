@@ -57,6 +57,76 @@ handle_cli_args() {
             echo "Auto-start desabilitado (quando existentes) para: $NAME"
             exit 0
             ;;
+        --open-path)
+            TARGET_PATH="$2"
+            if [ -z "$TARGET_PATH" ]; then
+                echo "Uso: $APP_NAME --open-path <caminho-local>"
+                exit 1
+            fi
+
+            # Resolve caminho absoluto
+            if TARGET_ABS=$(readlink -f "$TARGET_PATH" 2>/dev/null); then
+                TARGET_PATH="$TARGET_ABS"
+            fi
+
+            # Se não estiver dentro da pasta de nuvem, apenas delega para xdg-open
+            case "$TARGET_PATH" in
+                "$CLOUD_DIR"/*) ;;
+                *)
+                    xdg-open "$TARGET_PATH" >/dev/null 2>&1 &
+                    exit 0
+                    ;;
+            esac
+
+            # Descobre remoto e subcaminho: ~/Nuvem/<remote>/<subpath>
+            REL="${TARGET_PATH#$CLOUD_DIR/}"
+            REMOTE_NAME="${REL%%/*}"
+            SUB_PATH="${REL#*/}"
+            if [ -z "$REMOTE_NAME" ] || [ "$REMOTE_NAME" = "$REL" ]; then
+                # Não conseguiu separar remoto/caminho, faz fallback local
+                xdg-open "$TARGET_PATH" >/dev/null 2>&1 &
+                exit 0
+            fi
+
+            REMOTE_SPEC="${REMOTE_NAME}:${SUB_PATH}"
+
+            # Localiza binário do rclone (sem depender do splash)
+            if [ -f "$USER_BIN_DIR/rclone" ]; then
+                RCLONE_BIN="$USER_BIN_DIR/rclone"
+            elif command -v rclone &> /dev/null; then
+                RCLONE_BIN=$(command -v rclone)
+            fi
+
+            if [ -z "$RCLONE_BIN" ]; then
+                # Sem rclone, melhor tentar abrir localmente
+                xdg-open "$TARGET_PATH" >/dev/null 2>&1 &
+                exit 0
+            fi
+
+            # Busca metadata para identificar Google Docs/Sheets/etc.
+            META_JSON=$("$RCLONE_BIN" lsjson --metadata "$REMOTE_SPEC" 2>/dev/null)
+            if [ -z "$META_JSON" ]; then
+                xdg-open "$TARGET_PATH" >/dev/null 2>&1 &
+                exit 0
+            fi
+
+            MIME=$(echo "$META_JSON" | grep -o '"MimeType":[^,]*' | sed 's/.*"MimeType"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' | head -n1)
+
+            case "$MIME" in
+                application/vnd.google-apps.*)
+                    # Tenta obter link público ou de visualização
+                    URL=$("$RCLONE_BIN" link "$REMOTE_SPEC" 2>/dev/null)
+                    if [ -n "$URL" ]; then
+                        xdg-open "$URL" >/dev/null 2>&1 &
+                        exit 0
+                    fi
+                    ;;
+            esac
+
+            # Fallback: abre normalmente via sistema
+            xdg-open "$TARGET_PATH" >/dev/null 2>&1 &
+            exit 0
+            ;;
         --help|-h)
             echo "Uso: $APP_NAME [opções]"
             echo ""
@@ -65,6 +135,8 @@ handle_cli_args() {
             echo "Opções:"
             echo "  --enable-boot <nome-remoto>   Habilita auto-start (mount/sync) para o remoto"
             echo "  --disable-boot <nome-remoto>  Desabilita auto-start (mount/sync) para o remoto"
+            echo "  --open-path <caminho-local>   Resolvedor: abre caminho em ~/Nuvem,"
+            echo "                                redirecionando Docs/Sheets do Google para o navegador"
             echo "  -h, --help                    Mostra esta ajuda"
             exit 0
             ;;
@@ -148,6 +220,22 @@ install_system() {
     DESKTOP_FILE="$SHORTCUT_DIR/$APP_NAME.desktop"
     echo -e "[Desktop Entry]\nName=RClone Auto\nComment=Gerenciador de Nuvens\nExec=\"$TARGET_BIN\"\nIcon=$SYSTEM_ICON\nTerminal=true\nType=Application\nCategories=Utility;Network;" > "$DESKTOP_FILE"
     chmod +x "$DESKTOP_FILE"
+
+    # Resolvedor para abrir arquivos da pasta Nuvem com tratamento especial para Google Docs/Sheets
+    RESOLVER_DESKTOP="$SHORTCUT_DIR/${APP_NAME}-resolver.desktop"
+    cat <<EOF > "$RESOLVER_DESKTOP"
+[Desktop Entry]
+Name=RClone Auto Resolver
+Comment=Abre arquivos da Nuvem, redirecionando Google Docs/Sheets para o navegador
+Exec="$TARGET_BIN" --open-path "%f"
+Icon=$SYSTEM_ICON
+Terminal=false
+Type=Application
+NoDisplay=true
+MimeType=application/octet-stream;
+EOF
+    chmod +x "$RESOLVER_DESKTOP"
+
     if command -v update-desktop-database &> /dev/null; then update-desktop-database "$SHORTCUT_DIR" 2>/dev/null; fi
     if [ -d "$CLOUD_DIR" ]; then echo -e "[Desktop Entry]\nIcon=$SYSTEM_ICON\nType=Directory" > "$CLOUD_DIR/.directory" 2>/dev/null; fi
 }
@@ -238,6 +326,26 @@ stop_all() {
     rm "$SYSTEMD_DIR/rclone-mount-${NAME}.service" "$SYSTEMD_DIR/rclone-sync-${NAME}.timer" "$SYSTEMD_DIR/rclone-sync-${NAME}.service" 2>/dev/null
     systemctl --user daemon-reload
     ui_success "Serviço parado."
+}
+
+open_remote_in_browser() {
+    NAME="$1"
+    CONF=$("$RCLONE_BIN" config file | grep ".conf" | tail -n1)
+    TYPE=$(sed -n "/^\[$NAME\]/,/^\[/p" "$CONF" | grep "^type" | awk '{print $3}')
+
+    case "$TYPE" in
+        drive)
+            ui_talk "Abrindo Google Drive no navegador..."
+            xdg-open "https://drive.google.com/drive/u/0/my-drive" >/dev/null 2>&1 &
+            ;;
+        onedrive)
+            ui_talk "Abrindo OneDrive no navegador..."
+            xdg-open "https://onedrive.live.com/" >/dev/null 2>&1 &
+            ;;
+        *)
+            ui_error "Abertura web automática ainda não está disponível para o tipo: $TYPE"
+            ;;
+    esac
 }
 
 # --- 4. Ferramentas Globais ---
@@ -389,9 +497,10 @@ do_manage() {
     fi
 
     if [[ "$CHOICE" == *"Montado"* ]] || [[ "$CHOICE" == *"Sync"* ]]; then
-        ACTION=$(echo -e "📂 Abrir Pasta\n🔴 Desconectar\n⚙️  Alternar Auto-start (atual: $AUTO_ENABLED)\n🔙 Voltar" | $GUM_BIN choose --header "Opções para $NAME")
+        ACTION=$(echo -e "📂 Abrir Pasta\n🌐 Abrir na Web\n🔴 Desconectar\n⚙️  Alternar Auto-start (atual: $AUTO_ENABLED)\n🔙 Voltar" | $GUM_BIN choose --header "Opções para $NAME")
         case "$ACTION" in
             "📂 Abrir"*) xdg-open "$CLOUD_DIR/$NAME" ;;
+            "🌐 Abrir na Web"*) open_remote_in_browser "$NAME" ;;
             "🔴 Desconectar"*) if $GUM_BIN confirm "Tem certeza que deseja parar $NAME?"; then stop_all "$NAME"; fi ;;
             "⚙️  Alternar Auto-start"*)
                 if [ "$AUTO_ENABLED" = "sim" ]; then
@@ -403,10 +512,11 @@ do_manage() {
                 fi ;;
         esac
     else
-        ACTION=$(echo -e "🟢 Ativar (Mount)\n🔵 Ativar (Sync)\n⚙️  Alternar Auto-start (atual: $AUTO_ENABLED)\n✏️  Renomear\n🗑️  Excluir\n🔙 Voltar" | $GUM_BIN choose --header "Opções para $NAME")
+        ACTION=$(echo -e "🟢 Ativar (Mount)\n🔵 Ativar (Sync)\n🌐 Abrir na Web\n⚙️  Alternar Auto-start (atual: $AUTO_ENABLED)\n✏️  Renomear\n🗑️  Excluir\n🔙 Voltar" | $GUM_BIN choose --header "Opções para $NAME")
         case "$ACTION" in
             "🟢 Ativar"*) setup_mount "$NAME" ;;
             "🔵 Ativar"*) setup_sync "$NAME" ;;
+            "🌐 Abrir na Web"*) open_remote_in_browser "$NAME" ;;
             "⚙️  Alternar Auto-start"*)
                 if [ "$AUTO_ENABLED" = "sim" ]; then
                     systemctl --user disable "rclone-mount-${NAME}.service" "rclone-sync-${NAME}.timer" 2>/dev/null
