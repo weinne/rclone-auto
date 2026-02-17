@@ -83,9 +83,8 @@ handle_cli_args() {
             REMOTE_NAME="${REL%%/*}"
             SUB_PATH="${REL#*/}"
             if [ -z "$REMOTE_NAME" ] || [ "$REMOTE_NAME" = "$REL" ]; then
-                # Não conseguiu separar remoto/caminho, faz fallback local
-                xdg-open "$TARGET_PATH" >/dev/null 2>&1 &
-                exit 0
+                echo "rclone-auto: caminho não parece pertencer a um remoto em '$CLOUD_DIR'." >&2
+                exit 1
             fi
 
             REMOTE_SPEC="${REMOTE_NAME}:${SUB_PATH}"
@@ -98,20 +97,104 @@ handle_cli_args() {
             fi
 
             if [ -z "$RCLONE_BIN" ]; then
-                # Sem rclone, melhor tentar abrir localmente
-                xdg-open "$TARGET_PATH" >/dev/null 2>&1 &
-                exit 0
+                echo "rclone-auto: rclone não encontrado para resolver caminho remoto." >&2
+                exit 1
             fi
 
-            # Tenta obter um link web estável para o caminho remoto
-            URL=$("$RCLONE_BIN" link "$REMOTE_SPEC" 2>/dev/null)
-            if [ -n "$URL" ]; then
-                xdg-open "$URL" >/dev/null 2>&1 &
-                exit 0
+            # Garante que REMOTE_NAME é de fato um remoto conhecido do rclone
+            if ! "$RCLONE_BIN" listremotes 2>/dev/null | grep -q "^${REMOTE_NAME}:"; then
+                echo "rclone-auto: '$REMOTE_NAME' não é um remoto rclone conhecido. Nada a fazer." >&2
+                exit 1
+            fi
+            
+            ITEM_NAME=$(basename "$TARGET_PATH")
+
+            # Se tivermos (ou conseguirmos instalar) yad, usamos um menu gráfico; caso contrário,
+            # fallback para TUI (Gum) se em terminal, ou abre localmente.
+            if ensure_yad; then
+                CHOICE=$(yad --list \
+                    --title="Opções de Pasta na Nuvem" \
+                    --width=420 --height=260 --center \
+                    --window-icon="$SYSTEM_ICON" \
+                    --text="Selecione uma ação para:\n<b>$ITEM_NAME</b>\n\nRemoto: <b>$REMOTE_NAME</b>" \
+                    --column="Ação" \
+                    "🌐 Abrir na Web" \
+                    "🔗 Copiar link de compartilhamento" \
+                    "📄 Abrir arquivo localmente" \
+                    "📄⬇️ Copiar e abrir localmente" \
+                    "🔙 Cancelar" \
+                    --print-column=1)
+
+                # Se usuário fechou a janela ou cancelou
+                if [ $? -ne 0 ] || [ -z "$CHOICE" ]; then
+                    exit 0
+                fi
+            else
+                # Sem yad: se estivermos em um terminal interativo, usa Gum; senão, apenas abre localmente.
+                if [ -t 0 ]; then
+                    bootstrap_gum
+                    ui_header
+                    ui_talk "Opções para '$ITEM_NAME' em '$REMOTE_NAME'."
+                    CHOICE=$(echo -e "🌐 Abrir na Web\n🔗 Copiar link de compartilhamento\n📄 Abrir arquivo localmente\n📄⬇️ Copiar e abrir localmente\n🔙 Cancelar" | \
+                        $GUM_BIN choose --header "Opções de Pasta na Nuvem")
+                else
+                    xdg-open "$TARGET_PATH" >/dev/null 2>&1 &
+                    exit 0
+                fi
             fi
 
-            # Fallback: abre normalmente via sistema
-            xdg-open "$TARGET_PATH" >/dev/null 2>&1 &
+            case "$CHOICE" in
+                "🌐 Abrir na Web"*)
+                    URL=$("$RCLONE_BIN" link "$REMOTE_SPEC" 2>/dev/null)
+                    if [ -z "$URL" ]; then
+                        echo "rclone-auto: não foi possível obter link web para '$REMOTE_SPEC'." >&2
+                        exit 1
+                    fi
+                    xdg-open "$URL" >/dev/null 2>&1 &
+                    ;;
+                "🔗 Copiar link de compartilhamento"*)
+                    URL=$("$RCLONE_BIN" link "$REMOTE_SPEC" 2>/dev/null)
+                    if [ -z "$URL" ]; then
+                        echo "rclone-auto: não foi possível obter link web para '$REMOTE_SPEC'." >&2
+                        exit 1
+                    fi
+
+                    if command -v yad &> /dev/null; then
+                        # Apenas mostra o link em um campo editável para o usuário copiar manualmente.
+                        yad --form \
+                            --title="Link de compartilhamento" \
+                            --width=520 --center \
+                            --window-icon="$SYSTEM_ICON" \
+                            --text="Copie o link abaixo (Ctrl+C) ou edite se desejar:" \
+                            --field="Link:":"" "$URL" \
+                            --button="Fechar":0 >/dev/null 2>&1
+                    else
+                        # Fallback em modo texto (sem YAD disponível)
+                        echo "Copie o link abaixo manualmente:"
+                        echo "$URL"
+                    fi
+                    ;;
+                "📄 Abrir arquivo localmente"*)
+                    xdg-open "$TARGET_PATH" >/dev/null 2>&1 &
+                    ;;
+                "📄⬇️ Copiar e abrir localmente"*)
+                    TMP_DIR=$(mktemp -d /tmp/rclone-auto-open.XXXXXX 2>/dev/null)
+                    if [ -z "$TMP_DIR" ]; then
+                        echo "rclone-auto: não foi possível criar diretório temporário." >&2
+                        exit 1
+                    fi
+                    "$RCLONE_BIN" copy "$REMOTE_SPEC" "$TMP_DIR" >/dev/null 2>&1
+                    EXPORTED_FILE=$(find "$TMP_DIR" -maxdepth 1 -type f | head -n1)
+                    if [ -z "$EXPORTED_FILE" ]; then
+                        echo "rclone-auto: cópia para uso local falhou." >&2
+                        exit 1
+                    fi
+                    xdg-open "$EXPORTED_FILE" >/dev/null 2>&1 &
+                    ;;
+                "🔙 Cancelar"*)
+                    ;;
+            esac
+
             exit 0
             ;;
         --help|-h)
@@ -122,13 +205,60 @@ handle_cli_args() {
             echo "Opções:"
             echo "  --enable-boot <nome-remoto>   Habilita auto-start (mount/sync) para o remoto"
             echo "  --disable-boot <nome-remoto>  Desabilita auto-start (mount/sync) para o remoto"
-            echo "  --open-path <caminho-local>   Abre um arquivo/pasta da Nuvem diretamente no navegador (via rclone link)"
+            echo "  --open-path <caminho-local>   Abre menu 'Opções de Pasta na Nuvem' para itens em ~/Nuvem"
             echo "  -h, --help                    Mostra esta ajuda"
             exit 0
             ;;
     esac
 
     # Se nenhuma opção especial foi tratada, segue fluxo normal (TUI)
+}
+
+ensure_yad() {
+    # Já instalado
+    if command -v yad &> /dev/null; then
+        return 0
+    fi
+
+    # Sem terminal interativo: não tentamos instalar automaticamente
+    if [ ! -t 0 ]; then
+        return 1
+    fi
+
+    echo "O utilitário 'yad' não está instalado. Ele é usado para mostrar o menu gráfico 'Opções de Pasta na Nuvem'."
+    printf "Tentar instalar automaticamente agora? [s/N] "
+    read -r REPLY
+    case "$REPLY" in
+        s|S|sim|SIM|y|Y) ;;
+        *) return 1 ;;
+    esac
+
+    INSTALL_CMD=""
+    if command -v apt-get &> /dev/null; then
+        INSTALL_CMD="sudo apt-get update && sudo apt-get install -y yad"
+    elif command -v dnf &> /dev/null; then
+        INSTALL_CMD="sudo dnf install -y yad"
+    elif command -v pacman &> /dev/null; then
+        INSTALL_CMD="sudo pacman -Sy --noconfirm yad"
+    elif command -v zypper &> /dev/null; then
+        INSTALL_CMD="sudo zypper install -y yad"
+    fi
+
+    if [ -z "$INSTALL_CMD" ]; then
+        echo "Não foi possível detectar um gerenciador de pacotes suportado (apt, dnf, pacman, zypper)."
+        return 1
+    fi
+
+    echo "Executando: $INSTALL_CMD"
+    if sh -c "$INSTALL_CMD"; then
+        if command -v yad &> /dev/null; then
+            echo "'yad' instalado com sucesso."
+            return 0
+        fi
+    fi
+
+    echo "Falha ao instalar 'yad'."
+    return 1
 }
 
 ensure_terminal() {
@@ -205,6 +335,10 @@ install_system() {
     if [ -f "$CURRENT_PATH" ] && [ "$CURRENT_PATH" != "$TARGET_BIN" ]; then cp -f "$CURRENT_PATH" "$TARGET_BIN"; chmod +x "$TARGET_BIN"; fi
     if [ "$GUM_BIN" == "$SCRIPT_DIR/gum" ] && [ ! -f "$USER_BIN_DIR/gum" ]; then cp "$SCRIPT_DIR/gum" "$USER_BIN_DIR/"; chmod +x "$USER_BIN_DIR/gum"; fi
 
+    # Opcional: tenta garantir que 'yad' esteja disponível para a integração gráfica do resolvedor.
+    # Se não conseguir (ou se não houver TTY), apenas segue sem falhar a instalação.
+    ensure_yad >/dev/null 2>&1 || true
+
     DESKTOP_FILE="$SHORTCUT_DIR/$APP_NAME.desktop"
     echo -e "[Desktop Entry]\nName=RClone Auto\nComment=Gerenciador de Nuvens\nExec=\"$TARGET_BIN\"\nIcon=$SYSTEM_ICON\nTerminal=true\nType=Application\nCategories=Utility;Network;" > "$DESKTOP_FILE"
     chmod +x "$DESKTOP_FILE"
@@ -213,8 +347,8 @@ install_system() {
     RESOLVER_DESKTOP="$SHORTCUT_DIR/${APP_NAME}-resolver.desktop"
     cat <<EOF > "$RESOLVER_DESKTOP"
 [Desktop Entry]
-Name=RClone Auto Resolver (Web)
-Comment=Abre itens montados da Nuvem diretamente na Web
+Name=Opções de Pasta na Nuvem
+Comment=Menu de ações para itens em pastas montadas da Nuvem
 Exec="$TARGET_BIN" --open-path "%f"
 Icon=$SYSTEM_ICON
 Terminal=false
